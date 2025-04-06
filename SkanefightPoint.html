@@ -1,0 +1,299 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Jogo da Cobrinha Personalizável</title>
+  <style>
+    /* Reset e estilos gerais */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: Arial, sans-serif;
+      background: #111;
+      color: #fff;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 20px;
+      gap: 20px;
+    }
+    canvas {
+      background: #000;
+      image-rendering: pixelated;
+      border-radius: 10px;
+    }
+    .menu, .chat, .ranking {
+      background: #222;
+      padding: 15px;
+      border-radius: 15px;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    .menu {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      width: 300px;
+    }
+    input, select, button {
+      padding: 8px;
+      border-radius: 8px;
+      border: none;
+      outline: none;
+      font-size: 16px;
+    }
+    .color-picker-icon {
+      cursor: pointer;
+      font-size: 20px;
+      margin-left: 5px;
+    }
+    #colorPicker {
+      display: none;
+    }
+    .segmento {
+      width: 20px; height: 20px;
+      margin: 2px; border-radius: 4px;
+      display: inline-block;
+    }
+    .rainbow .segmento:nth-child(1) { background: red; }
+    .rainbow .segmento:nth-child(2) { background: orange; }
+    .rainbow .segmento:nth-child(3) { background: yellow; }
+    .rainbow .segmento:nth-child(4) { background: green; }
+    .rainbow .segmento:nth-child(5) { background: blue; }
+    .rainbow .segmento:nth-child(6) { background: indigo; }
+    .rainbow .segmento:nth-child(7) { background: violet; }
+
+    .blur canvas {
+      filter: drop-shadow(0 0 8px white);
+    }
+
+    .config-section {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="menu">
+    <h2>Login</h2>
+    <input id="nomeInput" placeholder="Nome único" maxlength="20" />
+    <input id="senhaInput" placeholder="Senha" type="password" maxlength="20" />
+    <button onclick="login()">Entrar</button>
+
+    <h2>Modo</h2>
+    <button onclick="escolherModo('single')">Singleplayer</button>
+    <button onclick="escolherModo('multi')">Multiplayer</button>
+
+    <h2>Personalização</h2>
+    <select id="estilo">
+      <option value="cor">Cor Personalizada</option>
+      <option value="neon">Neon</option>
+      <option value="xray">Xray</option>
+      <option value="rainbow">Rainbow</option>
+      <option value="invisible">Invisible</option>
+    </select>
+    <label>
+      🎨 <input type="color" id="colorPicker" value="#00ff00" />
+    </label>
+
+    <div class="config-section">
+      <label>Velocidade: <input type="range" id="velocidade" min="1" max="10" value="5" /></label>
+      <label>Tamanho do Grid: <input type="number" id="gridSize" min="10" max="100" value="20" /></label>
+      <button onclick="alternarControles()">⌨️ Alternar controles</button>
+      <label><input type="checkbox" id="motionBlur"> Motion Blur</label>
+    </div>
+
+    <button onclick="iniciarJogo()">Iniciar Jogo</button>
+  </div>
+
+  <canvas id="game" width="600" height="600"></canvas>
+
+  <div class="ranking">
+    <h3>Ranking</h3>
+    <ul id="ranking"></ul>
+  </div>
+
+  <div class="chat">
+    <h3>Comentários</h3>
+    <ul id="comentarios"></ul>
+    <textarea id="mensagem" maxlength="50" placeholder="Máx. 50 palavras"></textarea>
+    <button onclick="enviarComentario()">Enviar</button>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+  <script>
+    // Firebase config (substitua pelo seu)
+    const firebaseConfig = {
+  apiKey: "AIzaSyBDlY7lTq6HlbKRaZYnNv87NNb9UsQduC4",
+  authDomain: "snakefightpoint.firebaseapp.com",
+  databaseURL: "https://snakefightpoint-default-rtdb.firebaseio.com",
+  projectId: "snakefightpoint",
+  storageBucket: "snakefightpoint.firebasestorage.app",
+  messagingSenderId: "324188011523",
+  appId: "1:324188011523:web:ecd8772fb35b35d49e6236"
+};
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    // Variáveis
+    let usuario = {};
+    let modo = 'single';
+    let direcao = 'right';
+    let controles = 'setas'; // ou 'wasd'
+    let snake = [];
+    let comida = {};
+    let cor = '#00ff00';
+    let estilo = 'cor';
+    let blurAtivo = false;
+    let score = 0;
+    let gridSize = 20;
+    let velocidade = 5;
+    let intervalo;
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+
+    // Funções principais
+    function login() {
+      const nome = document.getElementById('nomeInput').value.trim();
+      const senha = document.getElementById('senhaInput').value.trim();
+      if (!nome || !senha) return alert('Preencha nome e senha');
+      db.ref('usuarios/' + nome).once('value').then(snapshot => {
+        if (snapshot.exists()) {
+          if (snapshot.val().senha !== senha) return alert('Senha incorreta');
+        } else {
+          db.ref('usuarios/' + nome).set({ senha, skin: estilo, cor });
+        }
+        usuario = { nome, senha };
+        alert('Login bem-sucedido!');
+      });
+    }
+
+    function escolherModo(m) {
+      modo = m;
+      alert("Modo selecionado: " + m);
+    }
+
+    function alternarControles() {
+      controles = controles === 'setas' ? 'wasd' : 'setas';
+      alert("Agora usando controles: " + controles);
+    }
+
+    function iniciarJogo() {
+      cor = document.getElementById('colorPicker').value;
+      estilo = document.getElementById('estilo').value;
+      blurAtivo = document.getElementById('motionBlur').checked;
+      velocidade = parseInt(document.getElementById('velocidade').value);
+      gridSize = parseInt(document.getElementById('gridSize').value);
+      score = 0;
+      snake = [{x: 5, y: 5}];
+      comida = {x: 10, y: 10};
+      document.body.className = blurAtivo ? 'blur' : '';
+      clearInterval(intervalo);
+      intervalo = setInterval(jogar, 1000 / velocidade);
+    }
+
+    function jogar() {
+      const head = {...snake[0]};
+      if (direcao === 'right') head.x++;
+      if (direcao === 'left') head.x--;
+      if (direcao === 'up') head.y--;
+      if (direcao === 'down') head.y++;
+
+      if (head.x < 0 || head.y < 0 || head.x >= gridSize || head.y >= gridSize ||
+          snake.some(s => s.x === head.x && s.y === head.y)) {
+        clearInterval(intervalo);
+        alert('Fim de jogo! Pontuação: ' + score);
+        return;
+      }
+
+      snake.unshift(head);
+      if (head.x === comida.x && head.y === comida.y) {
+        score++;
+        comida = {
+          x: Math.floor(Math.random() * gridSize),
+          y: Math.floor(Math.random() * gridSize)
+        };
+      } else {
+        snake.pop();
+      }
+
+      desenhar();
+    }
+
+    function desenhar() {
+      const tamanho = canvas.width / gridSize;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Comida
+      ctx.fillStyle = 'red';
+      ctx.fillRect(comida.x * tamanho, comida.y * tamanho, tamanho, tamanho);
+
+      // Snake
+      snake.forEach((s, i) => {
+        let corSegmento = cor;
+        if (estilo === 'neon') corSegmento = '#0ff';
+        else if (estilo === 'xray') {
+          ctx.strokeStyle = '#0cf';
+          ctx.strokeRect(s.x * tamanho, s.y * tamanho, tamanho, tamanho);
+          return;
+        } else if (estilo === 'rainbow') {
+          const cores = ['red', 'orange', 'yellow', 'green', 'blue', 'indigo', 'violet'];
+          corSegmento = cores[i % cores.length];
+        } else if (estilo === 'invisible') {
+          corSegmento = i === 0 ? 'white' : 'transparent';
+        }
+        ctx.fillStyle = corSegmento;
+        ctx.fillRect(s.x * tamanho, s.y * tamanho, tamanho, tamanho);
+      });
+    }
+
+    // Teclado
+    document.addEventListener('keydown', e => {
+      if (controles === 'setas') {
+        if (e.key === 'ArrowUp') direcao = 'up';
+        if (e.key === 'ArrowDown') direcao = 'down';
+        if (e.key === 'ArrowLeft') direcao = 'left';
+        if (e.key === 'ArrowRight') direcao = 'right';
+      } else {
+        if (e.key === 'w') direcao = 'up';
+        if (e.key === 's') direcao = 'down';
+        if (e.key === 'a') direcao = 'left';
+        if (e.key === 'd') direcao = 'right';
+      }
+    });
+
+    // Comentários
+    function enviarComentario() {
+      const msg = document.getElementById('mensagem').value.trim();
+      if (!msg || msg.split(" ").length > 50) return;
+      db.ref('comentarios').push({ nome: usuario.nome, msg });
+      document.getElementById('mensagem').value = '';
+    }
+
+    db.ref('comentarios').on('child_added', snap => {
+      const li = document.createElement('li');
+      li.textContent = `${snap.val().nome}: ${snap.val().msg}`;
+      document.getElementById('comentarios').appendChild(li);
+    });
+
+    // Ranking
+    function atualizarRanking() {
+      db.ref('ranking').orderByValue().limitToLast(10).on('value', snap => {
+        const ul = document.getElementById('ranking');
+        ul.innerHTML = '';
+        const lista = [];
+        snap.forEach(s => lista.unshift({ nome: s.key, score: s.val() }));
+        lista.forEach(p => {
+          const li = document.createElement('li');
+          li.textContent = `${p.nome}: ${p.score}`;
+          ul.appendChild(li);
+        });
+      });
+    }
+    atualizarRanking();
+  </script>
+</body>
+</html>
